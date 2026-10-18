@@ -1,286 +1,223 @@
+"""Read SSURGO map-unit components from USDA Soil Data Access.
+
+Maintained as an automated contribution to the Out West Septic project.
+Survey information is background research, not a parcel evaluation or OSSF design.
 """
-Out West Septic — outwestseptic.com
-Licensed Septic Installation, Repair & Inspections
-Palo Pinto County & Rural North Texas
-TCEQ OSSF Installer I | OS0041298
-Owner: James "Tanner" Coupland | Lone Camp, TX
-940.452.0598
-
-USDA NRCS Web Soil Survey lookup for septic-relevant soil properties.
-
-The USDA Web Soil Survey public API is read-only and does not require a key.
-If the network call fails, the script falls back to a curated North Texas
-soil-preset table so the tool remains useful offline.
-
-Septic suitability flags here are first-pass only — verify with a real
-perc test and the county Designated Representative before designing.
-"""
-
 from __future__ import annotations
 
 import argparse
+from dataclasses import asdict, dataclass
+from datetime import datetime, timezone
+from http.client import HTTPException
+import json
+import math
+import re
 import sys
-from dataclasses import dataclass
+from urllib.error import URLError
+from urllib.request import Request, urlopen
+
+ENDPOINT = "https://sdmdataaccess.nrcs.usda.gov/Tabular/post.rest"
+WSS = "https://websoilsurvey.nrcs.usda.gov/app/"
+LIMITATION = (
+    "Survey map units describe an area containing multiple components; they do not "
+    "identify the soil at an exact point. No percolation rate, loading rate, system "
+    "suitability, or permit approval is inferred. Obtain a site evaluation."
+)
+COLUMNS = (
+    "areasymbol", "areaname", "saverest", "mukey", "musym", "muname",
+    "cokey", "compname", "comppct_r", "drainagecl",
+)
+MAX_RESPONSE_BYTES = 2 * 1024 * 1024
 
 
-class OutWestSepticSoilLookup:
-    """
-    Soil lookup for rural North Texas.
-    Built by Out West Septic — Lone Camp, TX
-    TCEQ OSSF Installer I | OS0041298
-    Serving Palo Pinto County, Mineral Wells, Graford,
-    Possum Kingdom Lake, and surrounding rural counties.
-    outwestseptic.com | 940.452.0598
-    """
-
-    SERVICE_AREAS = [
-        "Palo Pinto County TX",
-        "Hood County TX",
-        "Erath County TX",
-        "Stephens County TX",
-        "Young County TX",
-        "Jack County TX",
-        "Eastland County TX",
-        "Mineral Wells TX",
-        "Graford TX",
-        "Possum Kingdom Lake TX",
-        "Lone Camp TX",
-    ]
-
-    # Curated North Texas soil presets (offline fallback).
-    SOIL_PRESETS = {
-        "Cisco": {
-            "texture": "sandy loam",
-            "drainage_class": "well drained",
-            "typical_perc_min_per_in": 8,
-            "depth_to_bedrock_in": 60,
-            "septic_suitability": "good — sandy loam works for conventional gravity",
-            "counties": ["Palo Pinto County TX", "Eastland County TX"],
-        },
-        "Thurber": {
-            "texture": "clay",
-            "drainage_class": "moderately well drained",
-            "typical_perc_min_per_in": 45,
-            "depth_to_bedrock_in": 36,
-            "septic_suitability": "marginal — slow perc; expanded drainfield or aerobic referral",
-            "counties": ["Palo Pinto County TX", "Stephens County TX"],
-        },
-        "Bonti-Exray": {
-            "texture": "rocky / limestone",
-            "drainage_class": "excessively drained",
-            "typical_perc_min_per_in": 12,
-            "depth_to_bedrock_in": 14,
-            "septic_suitability": "shallow — depth to limestone is the constraint, not texture",
-            "counties": ["Palo Pinto County TX", "Erath County TX"],
-        },
-        "Frio": {
-            "texture": "silty clay loam",
-            "drainage_class": "somewhat poorly drained",
-            "typical_perc_min_per_in": 25,
-            "depth_to_bedrock_in": 48,
-            "septic_suitability": "bottomland — seasonal water table can be the constraint",
-            "counties": ["Palo Pinto County TX", "Hood County TX"],
-        },
-        "Truce": {
-            "texture": "clay loam",
-            "drainage_class": "moderately well drained",
-            "typical_perc_min_per_in": 20,
-            "depth_to_bedrock_in": 42,
-            "septic_suitability": "moderate — standard conventional with care on setbacks",
-            "counties": ["Palo Pinto County TX", "Stephens County TX"],
-        },
-        "Paluxy": {
-            "texture": "sandy",
-            "drainage_class": "well drained",
-            "typical_perc_min_per_in": 10,
-            "depth_to_bedrock_in": 60,
-            "septic_suitability": "good — sandy; check depth to water table near lakes",
-            "counties": ["Hood County TX"],
-        },
-        "Windthorst": {
-            "texture": "clay",
-            "drainage_class": "moderately well drained",
-            "typical_perc_min_per_in": 40,
-            "depth_to_bedrock_in": 30,
-            "septic_suitability": "marginal — slow perc; expanded drainfield",
-            "counties": ["Hood County TX", "Erath County TX"],
-        },
-        "Duffau": {
-            "texture": "sandy loam",
-            "drainage_class": "well drained",
-            "typical_perc_min_per_in": 12,
-            "depth_to_bedrock_in": 48,
-            "septic_suitability": "good — standard conventional design",
-            "counties": ["Hood County TX", "Erath County TX"],
-        },
-    }
-
-    @classmethod
-    def lookup_series(cls, series_name: str) -> "SoilSeriesInfo":
-        if series_name not in cls.SOIL_PRESETS:
-            raise ValueError(
-                f"Soil series '{series_name}' not in the local preset table. "
-                f"Available: {', '.join(sorted(cls.SOIL_PRESETS))}"
-            )
-        data = cls.SOIL_PRESETS[series_name]
-        return SoilSeriesInfo(
-            series_name=series_name,
-            texture=data["texture"],
-            drainage_class=data["drainage_class"],
-            typical_perc_min_per_in=data["typical_perc_min_per_in"],
-            depth_to_bedrock_in=data["depth_to_bedrock_in"],
-            septic_suitability=data["septic_suitability"],
-            counties=tuple(data["counties"]),
-            source="curated North Texas preset — verify with real perc test",
-        )
-
-    @classmethod
-    def list_series(cls) -> list[str]:
-        return sorted(cls.SOIL_PRESETS)
-
-    @classmethod
-    def fetch_usda(cls, county: str) -> "SoilSeriesInfo | None":
-        """Best-effort USDA Web Soil Survey lookup. Returns None on failure."""
-        try:
-            import requests  # type: ignore
-        except ImportError:
-            return None
-        try:
-            # NOTE: USDA WSS public API shape can change. This is a best-effort
-            # attempt and may return None even when the network is healthy.
-            resp = requests.get(
-                "https://websoilsurvey.sc.egov.usda.gov/DSD/Download/Cache/SSA/"
-                f"{_county_fips_for(county):05d}/wss_SSA_{_county_fips_for(county):05d}.txt",
-                timeout=8.0,
-            )
-            if resp.status_code != 200:
-                return None
-            # Successful fetch — but parsing the WSS export is out of scope here.
-            return SoilSeriesInfo(
-                series_name="(county export)",
-                texture="(see WSS export)",
-                drainage_class="(see WSS export)",
-                typical_perc_min_per_in=0,
-                depth_to_bedrock_in=0,
-                septic_suitability="(see WSS export)",
-                counties=(county,),
-                source=f"USDA NRCS Web Soil Survey — county {county}",
-            )
-        except Exception:
-            return None
+class OutWestSepticSoilDataError(RuntimeError):
+    """The official service did not return usable survey data."""
 
 
-def _county_fips_for(county: str) -> int:
-    # Texas FIPS codes for the priority counties.
-    table = {
-        "Palo Pinto County TX": 363,
-        "Hood County TX": 221,
-        "Erath County TX": 143,
-        "Stephens County TX": 429,
-        "Young County TX": 503,
-        "Jack County TX": 237,
-        "Eastland County TX": 133,
-    }
-    if county not in table:
-        raise ValueError(
-            f"County '{county}' not in FIPS table. Use one of: "
-            f"{', '.join(table)}"
-        )
-    return table[county]
+SoilDataError = OutWestSepticSoilDataError
+
+
+def validate_mukey(value: str) -> str:
+    """Require a numeric USDA key; never interpolate caller-supplied SQL."""
+    if not isinstance(value, str) or not re.fullmatch(r"[1-9][0-9]{0,29}", value):
+        raise ValueError("mukey must be a positive ASCII integer key from Web Soil Survey.")
+    return value
+
+
+def build_query(mukey: str) -> str:
+    key = validate_mukey(mukey)
+    return f"""SELECT l.areasymbol, l.areaname, sac.saverest,
+       m.mukey, m.musym, m.muname,
+       c.cokey, c.compname, c.comppct_r, c.drainagecl
+FROM mapunit AS m
+INNER JOIN legend AS l ON m.lkey = l.lkey
+    AND l.areatypename = 'Non-MLRA Soil Survey Area'
+INNER JOIN sacatalog AS sac ON sac.areasymbol = l.areasymbol
+LEFT JOIN component AS c ON c.mukey = m.mukey
+WHERE m.mukey = '{key}'
+ORDER BY c.comppct_r DESC, c.cokey"""
 
 
 @dataclass(frozen=True)
-class SoilSeriesInfo:
-    series_name: str
-    texture: str
-    drainage_class: str
-    typical_perc_min_per_in: float
-    depth_to_bedrock_in: int
-    septic_suitability: str
-    counties: tuple[str, ...]
-    source: str
+class OutWestSepticSoilComponent:
+    key: str
+    name: str | None
+    representative_percent: int | None
+    drainage_class: str | None
+
+
+@dataclass(frozen=True)
+class OutWestSepticSoilMapUnit:
+    mukey: str
+    symbol: str
+    name: str
+    survey_area: str
+    survey_name: str
+    survey_version_date: str | None
+    components: tuple[OutWestSepticSoilComponent, ...]
+    retrieved_at: str
+    source: str = ENDPOINT
+    limitation: str = LIMITATION
 
     def render(self) -> str:
         lines = [
-            "Out West Septic — Soil Series Lookup",
-            "TCEQ OSSF Installer I | OS0041298 | Lone Camp, TX",
-            "",
-            f"Series:               {self.series_name}",
-            f"Texture:              {self.texture}",
-            f"Drainage class:       {self.drainage_class}",
-            f"Typical perc rate:    {self.typical_perc_min_per_in} min/in",
-            f"Depth to bedrock:     {self.depth_to_bedrock_in} in",
-            f"Septic suitability:   {self.septic_suitability}",
-            f"Common counties:      {', '.join(self.counties)}",
-            f"Source:               {self.source}",
-            "",
-            "Always confirm with a real perc test and your county Designated",
-            "Representative before designing a system. Out West Septic installs",
-            "conventional gravity systems only.",
-            "",
-            "— Out West Septic — outwestseptic.com — 940.452.0598 —",
+            "Out West Septic project - USDA soil survey reference",
+            f"Map unit: {self.mukey} / {self.symbol} - {self.name}",
+            f"Survey: {self.survey_area} - {self.survey_name}",
+            f"Survey version date: {self.survey_version_date or 'not reported'}",
+            f"Retrieved (UTC): {self.retrieved_at}",
+            f"Source: {self.source}", "", "Mapped components:",
         ]
+        for component in self.components:
+            percent = ("not reported" if component.representative_percent is None
+                       else f"{component.representative_percent}%")
+            lines.append(
+                f"- {component.name or 'name not reported'} (key {component.key}): "
+                f"representative share {percent}; drainage "
+                f"{component.drainage_class or 'not reported'}"
+            )
+        if not self.components:
+            lines.append("- No component records reported; this is not an approval.")
+        lines.extend(["", self.limitation, f"Check the map and full report: {WSS}"])
         return "\n".join(lines)
 
 
-def _build_arg_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(
-        prog="outwestseptic_soil_lookup",
-        description=(
-            "Soil series lookup for TCEQ OSSF conventional systems in rural "
-            "North Texas.\nBuilt by Out West Septic — outwestseptic.com — "
-            "TCEQ OSSF Installer I OS0041298."
-        ),
+SoilComponent = OutWestSepticSoilComponent
+SoilMapUnit = OutWestSepticSoilMapUnit
+
+
+def _optional_text(value: object) -> str | None:
+    if value is None or value == "":
+        return None
+    if not isinstance(value, str):
+        raise SoilDataError("USDA returned an unexpected text field.")
+    return value
+
+
+def _required_text(value: object) -> str:
+    text = _optional_text(value)
+    if text is None:
+        raise SoilDataError("USDA omitted a required map-unit identifier.")
+    return text
+
+
+def _percentage(value: object) -> int | None:
+    if value is None or value == "":
+        return None
+    if isinstance(value, bool) or not re.fullmatch(r"[0-9]{1,3}", str(value)):
+        raise SoilDataError("USDA returned an invalid component percentage.")
+    percent = int(value)
+    if percent > 100:
+        raise SoilDataError("USDA returned a component percentage above 100.")
+    return percent
+
+
+def parse_response(payload: object, mukey: str) -> SoilMapUnit:
+    key = validate_mukey(mukey)
+    if not isinstance(payload, dict) or "Table" not in payload:
+        raise SoilDataError("USDA returned no result table; no local data were substituted.")
+    table = payload["Table"]
+    if not isinstance(table, list) or len(table) < 2:
+        raise SoilDataError(f"No SSURGO map unit returned for mukey {key}.")
+    header = table[0]
+    if (not isinstance(header, list) or any(not isinstance(c, str) for c in header)
+            or len(set(header)) != len(header) or not set(COLUMNS).issubset(header)):
+        raise SoilDataError("USDA response columns do not match the expected schema.")
+    metadata = None
+    components = []
+    seen_keys = set()
+    for row in table[1:]:
+        if not isinstance(row, list) or len(row) != len(header):
+            raise SoilDataError("USDA returned a malformed table row.")
+        item = dict(zip(header, row))
+        row_meta = tuple(item[c] for c in COLUMNS[:6])
+        if item["mukey"] != key or (metadata is not None and row_meta != metadata):
+            raise SoilDataError("USDA returned inconsistent map-unit identifiers.")
+        metadata = row_meta
+        if item["cokey"] is None or item["cokey"] == "":
+            if any(item[c] not in (None, "") for c in COLUMNS[7:]):
+                raise SoilDataError("USDA returned component data without a key.")
+            continue
+        component_key = _required_text(item["cokey"])
+        if component_key in seen_keys:
+            raise SoilDataError("USDA returned a duplicate component key.")
+        seen_keys.add(component_key)
+        components.append(SoilComponent(
+            component_key, _optional_text(item["compname"]),
+            _percentage(item["comppct_r"]), _optional_text(item["drainagecl"]),
+        ))
+    area, area_name, version, _, symbol, name = metadata
+    return SoilMapUnit(
+        key, _required_text(symbol), _required_text(name), _required_text(area),
+        _required_text(area_name), _optional_text(version), tuple(components),
+        datetime.now(timezone.utc).isoformat(),
     )
-    parser.add_argument("series", nargs="?", help="Soil series name (e.g. Cisco, Thurber).")
-    parser.add_argument(
-        "--list",
-        action="store_true",
-        help="List known soil series presets and exit.",
-    )
-    parser.add_argument(
-        "--try-usda",
-        metavar="COUNTY",
-        help="Attempt to fetch from the USDA Web Soil Survey for the given county.",
-    )
-    return parser
+
+
+class OutWestSepticSoilLookup:
+    """Fetch published survey components without inventing site measurements."""
+
+    @staticmethod
+    def fetch_usda(mukey: str, timeout: float = 20.0) -> SoilMapUnit:
+        query = build_query(mukey)
+        if (isinstance(timeout, bool) or not isinstance(timeout, (float, int))
+                or not 0 < timeout <= 60 or not math.isfinite(timeout)):
+            raise ValueError("timeout must be finite and between 0 and 60 seconds.")
+        body = json.dumps({"query": query, "format": "JSON+COLUMNNAME"}).encode("utf-8")
+        request = Request(ENDPOINT, data=body, headers={
+            "Content-Type": "application/json", "Accept": "application/json",
+            "User-Agent": "OutWestSepticSoilLookup/2.0",
+        }, method="POST")
+        try:
+            with urlopen(request, timeout=timeout) as response:
+                raw = response.read(MAX_RESPONSE_BYTES + 1)
+            if len(raw) > MAX_RESPONSE_BYTES:
+                raise SoilDataError("USDA response exceeded the 2 MiB limit.")
+            payload = json.loads(raw)
+        except (HTTPException, URLError, OSError, UnicodeError, ValueError) as exc:
+            raise SoilDataError(
+                "USDA request failed or returned invalid JSON; no local data were substituted."
+            ) from exc
+        return parse_response(payload, mukey)
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = _build_arg_parser()
+    parser = argparse.ArgumentParser(description=(
+        "Read USDA SSURGO map-unit components for research. No septic suitability rating."
+    ))
+    parser.add_argument("--mukey", required=True, help="Map-unit key from USDA Web Soil Survey.")
+    parser.add_argument("--json", action="store_true", help="Print a report with provenance as JSON.")
+    parser.add_argument("--timeout", type=float, default=20.0, help="Network timeout (0 < seconds <= 60).")
     args = parser.parse_args(argv)
-
-    if args.list:
-        for s in OutWestSepticSoilLookup.list_series():
-            print(f"  - {s}")
-        return 0
-
-    series = args.series
-    if not series:
-        try:
-            series = input("Soil series name: ").strip()
-        except EOFError:
-            print("Soil series is required.", file=sys.stderr)
-            return 2
-
     try:
-        info = OutWestSepticSoilLookup.lookup_series(series)
-        print(info.render())
+        report = OutWestSepticSoilLookup.fetch_usda(args.mukey, args.timeout)
     except ValueError as exc:
-        print(str(exc), file=sys.stderr)
+        print(f"Input error: {exc}", file=sys.stderr)
         return 2
-
-    if args.try_usda:
-        usda_info = OutWestSepticSoilLookup.fetch_usda(args.try_usda)
-        if usda_info is None:
-            print(
-                "\nUSDA Web Soil Survey fetch did not return data — the local "
-                "preset above remains the canonical answer for this run.",
-                file=sys.stderr,
-            )
-        else:
-            print("\n--- USDA Web Soil Survey reference ---")
-            print(usda_info.render())
+    except SoilDataError as exc:
+        print(f"Lookup unavailable: {exc}", file=sys.stderr)
+        return 1
+    print(json.dumps(asdict(report), indent=2, allow_nan=False) if args.json else report.render())
     return 0
 
 

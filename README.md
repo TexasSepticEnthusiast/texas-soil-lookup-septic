@@ -1,45 +1,47 @@
-# Texas Septic Soil Lookup
+# USDA soil survey lookup for the Out West Septic project
 
-USDA NRCS Web Soil Survey lookup with North Texas soil presets. Forked from the [texas-septic-toolkit](https://github.com/TexasSepticEnthusiast/texas-septic-toolkit). Built by [Out West Septic](https://outwestseptic.com) in Lone Camp, TX. TCEQ OSSF Installer I, License OS0041298. Phone 940.452.0598.
+Retrieve published SSURGO map-unit components from USDA Soil Data Access. This tool supports background research for the [Out West Septic](https://outwestseptic.com) project, with Palo Pinto County as the worked example. It does not infer septic suitability or identify the soil at a specific point.
 
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](./LICENSE)
-[![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
-[![TCEQ OSSF](https://img.shields.io/badge/TCEQ-OSSF_Installer_I-007787)](https://www.tceq.texas.gov/permitting/ossf)
+## Run
 
-## What this fork is
+Python 3.10+; standard library only. A live lookup requires internet access.
 
-A focused fork of the [texas-septic-toolkit](https://github.com/TexasSepticEnthusiast/texas-septic-toolkit), containing only the soil lookup. Use this to identify common North Texas soil series and their septic suitability.
-
-## Quick start
-
-```bash
-git clone https://github.com/TexasSepticEnthusiast/texas-septic-soil-lookup.git
-cd texas-septic-soil-lookup
-python scripts/outwestseptic_soil_lookup.py Cisco
-python scripts/outwestseptic_soil_lookup.py --list
+```sh
+git clone https://github.com/TexasSepticEnthusiast/texas-soil-lookup-septic.git
+cd texas-soil-lookup-septic
+python scripts/outwestseptic_soil_lookup.py --mukey 390929
+python scripts/outwestseptic_soil_lookup.py --mukey 390929 --json
+python -m unittest discover -s tests -v
 ```
 
-The script encodes eight soil series common in Palo Pinto County, Hood County, Erath County, and the surrounding counties:
+The example key was returned by USDA for survey `TX363` (Palo Pinto County) on 2026-10-18. It is an example map unit, not a customer property or a recommendation. Use the key for your own area of interest.
 
-- Cisco (sandy loam, well drained). Easy conventional.
-- Thurber (clay, slow perc). Marginal conventional.
-- Bonti-Exray (rocky / limestone). Depth to rock is the constraint.
-- Frio (silty clay loam, bottomland).
-- Truce (clay loam, workable).
-- Paluxy (sandy, well drained).
-- Windthorst (clay, slow perc).
-- Duffau (sandy loam, easy conventional).
+## Find the right key
 
-The script includes a curated offline preset table and a best-effort USDA NRCS Web Soil Survey fetcher.
+1. Open [USDA Web Soil Survey](https://websoilsurvey.nrcs.usda.gov/app/), locate the property and define an area of interest.
+2. Inspect the soil map and map-unit information. Obtain the numeric national map-unit key (`mukey`), not a soil series name or the survey-local map symbol (`musym`). USDA's [query guide](https://sdmdataaccess.nrcs.usda.gov/documents/FundamentalQuery.pdf) explains these distinct identifiers and national map-unit labels.
+3. Query each relevant map unit. Check the returned survey name, key and map-unit description against the map. A property can contain more than one map unit.
+4. Save the JSON output with the project record. It includes the survey version date as reported by USDA, retrieval time, source endpoint and limitations.
 
-## Service area
+## Interpret the output
 
-Out West Septic serves Palo Pinto, Hood, Erath, Stephens, Young, Jack, and Eastland counties. Mineral Wells, Graford, Possum Kingdom Lake.
+The report lists mapped components, their representative share and drainage class. These are survey attributes, not field measurements. Component shares are not normalized; missing percentages or drainage classes remain `null` in JSON and `not reported` in text. A map unit may have no component records.
 
-## License
+The report deliberately supplies no percolation rate, bedrock depth, hydraulic loading rate, system selection or pass/fail decision. USDA explains that survey information supports planning and that engineering applications can require onsite investigation. The permitting authority and qualified site evaluator must determine what applies to the property.
 
-MIT. See [LICENSE](./LICENSE).
+## Errors and migration
 
----
+The command returns `0` for a usable report, `1` for a failed lookup or missing/malformed data, and `2` for invalid input. A service outage never falls back to guessed values. `--timeout` accepts a finite value greater than zero and at most 60 seconds (default 20).
 
-Out West Septic, outwestseptic.com, 940.452.0598, TCEQ OSSF Installer I OS0041298, Lone Camp, TX
+This replaces the old `Cisco`, `--list` and `--try-usda COUNTY` interface and removes `SOIL_PRESETS`, `lookup_series` and `list_series`. Those paths previously supplied uncited rates and a county-download request whose results were never parsed. Python callers now use `OutWestSepticSoilLookup.fetch_usda(mukey)` and receive `OutWestSepticSoilMapUnit` (also available as `SoilMapUnit`) or an explicit exception. Reports contain `OutWestSepticSoilComponent` records; failures use `OutWestSepticSoilDataError` (`SoilDataError` is retained as an alias). There is no hidden compatibility path that returns the old guesses.
+
+## Sources and contribution
+
+Reviewed 2026-10-18:
+
+- [USDA REST service documentation](https://sdmdataaccess.nrcs.usda.gov/webservicehelp.aspx): POST query service and JSON column-name format.
+- [USDA fundamental query](https://sdmdataaccess.nrcs.usda.gov/documents/FundamentalQuery.pdf): map-unit/component relationships and survey version metadata.
+- [USDA SSURGO versus STATSGO](https://sdmdataaccess.nrcs.usda.gov/documents/DiscriminatingBetweenSSURGOAndSTATSGO.pdf): SSURGO query constraint.
+- [USDA Web Soil Survey](https://websoilsurvey.nrcs.usda.gov/app/): map selection and onsite-investigation limits.
+
+This revision is an AI-assisted contribution requested for the Out West Septic project. It does not claim independent endorsement, licensed design review, field use or business credentials. See [LICENSE](LICENSE) and the [reference notes](wiki/Soil-Lookup-Reference.md).
