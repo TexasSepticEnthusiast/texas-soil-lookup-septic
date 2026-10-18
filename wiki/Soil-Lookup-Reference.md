@@ -1,27 +1,11 @@
-# Texas Septic Soil Lookup Reference
+# How should soil survey data be used in a septic project?
 
-> **Quick answer:** Eight soil series common in rural North Texas are encoded in `outwestseptic_soil_lookup.py`: Cisco, Thurber, Bonti-Exray, Frio, Truce, Paluxy, Windthorst, Duffau. Each has a typical perc rate and septic suitability flag.
+> Use the mapped survey as background for questions to investigate onsite. It does not select a septic system or supply a design loading rate.
 
-## The eight series
+The [lookup command](../README.md) retrieves a specific SSURGO map unit from USDA Soil Data Access. Its components may include several soils or non-soil features; the dominant component does not prove what lies beneath an individual trench. Check all relevant map units and the complete Web Soil Survey report.
 
-| Series | Texture | Perc (min/in) | Suitability |
-|--------|---------|---------------|-------------|
-| Cisco | sandy loam | 8 | good |
-| Thurber | clay | 45 | marginal |
-| Bonti-Exray | rocky / limestone | 12 | shallow rock |
-| Frio | silty clay loam | 25 | bottomland |
-| Truce | clay loam | 20 | workable |
-| Paluxy | sandy | 10 | good |
-| Windthorst | clay | 40 | marginal |
-| Duffau | sandy loam | 12 | good |
+Record the map-unit key, survey area and version, retrieval date, mapped components and missing values. Bring that record to the site evaluator and permitting authority. Ask which site observations and reports are required before planning an OSSF. No series-name preset can replace that work.
 
-## Source
+USDA's [Web Soil Survey](https://websoilsurvey.nrcs.usda.gov/app/) explains the limits of survey-based planning. The [official query example](https://sdmdataaccess.nrcs.usda.gov/documents/FundamentalQuery.pdf) explains representative component shares and missing component records. Neither provides a universal percolation rate for a named series.
 
-- USDA NRCS Web Soil Survey: https://websoilsurvey.sc.egov.usda.gov/App/HomePage.htm
-- TCEQ Chapter 285: https://www.tceq.texas.gov/permitting/ossf
-
-**last_verified:** 2026-10-17
-
----
-
-*Out West Septic — outwestseptic.com — TCEQ OSSF Installer I OS0041298 — Lone Camp, TX — 940.452.0598*
+This is educational documentation for the Out West Septic project. Reviewed 2026-10-18; no claim of regulatory approval or a site evaluation.
