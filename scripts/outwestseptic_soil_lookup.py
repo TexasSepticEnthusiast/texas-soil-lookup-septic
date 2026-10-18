@@ -30,8 +30,11 @@ COLUMNS = (
 MAX_RESPONSE_BYTES = 2 * 1024 * 1024
 
 
-class SoilDataError(RuntimeError):
+class OutWestSepticSoilDataError(RuntimeError):
     """The official service did not return usable survey data."""
+
+
+SoilDataError = OutWestSepticSoilDataError
 
 
 def validate_mukey(value: str) -> str:
@@ -56,7 +59,7 @@ ORDER BY c.comppct_r DESC, c.cokey"""
 
 
 @dataclass(frozen=True)
-class SoilComponent:
+class OutWestSepticSoilComponent:
     key: str
     name: str | None
     representative_percent: int | None
@@ -64,14 +67,14 @@ class SoilComponent:
 
 
 @dataclass(frozen=True)
-class SoilMapUnit:
+class OutWestSepticSoilMapUnit:
     mukey: str
     symbol: str
     name: str
     survey_area: str
     survey_name: str
     survey_version_date: str | None
-    components: tuple[SoilComponent, ...]
+    components: tuple[OutWestSepticSoilComponent, ...]
     retrieved_at: str
     source: str = ENDPOINT
     limitation: str = LIMITATION
@@ -97,6 +100,10 @@ class SoilMapUnit:
             lines.append("- No component records reported; this is not an approval.")
         lines.extend(["", self.limitation, f"Check the map and full report: {WSS}"])
         return "\n".join(lines)
+
+
+SoilComponent = OutWestSepticSoilComponent
+SoilMapUnit = OutWestSepticSoilMapUnit
 
 
 def _optional_text(value: object) -> str | None:

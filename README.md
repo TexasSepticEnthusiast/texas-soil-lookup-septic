@@ -33,7 +33,7 @@ The report deliberately supplies no percolation rate, bedrock depth, hydraulic l
 
 The command returns `0` for a usable report, `1` for a failed lookup or missing/malformed data, and `2` for invalid input. A service outage never falls back to guessed values. `--timeout` accepts a finite value greater than zero and at most 60 seconds (default 20).
 
-This replaces the old `Cisco`, `--list` and `--try-usda COUNTY` interface and removes `SOIL_PRESETS`, `lookup_series` and `list_series`. Those paths previously supplied uncited rates and a county-download request whose results were never parsed. Python callers now use `OutWestSepticSoilLookup.fetch_usda(mukey)` and receive `SoilMapUnit` or an explicit exception. There is no hidden compatibility path that returns the old guesses.
+This replaces the old `Cisco`, `--list` and `--try-usda COUNTY` interface and removes `SOIL_PRESETS`, `lookup_series` and `list_series`. Those paths previously supplied uncited rates and a county-download request whose results were never parsed. Python callers now use `OutWestSepticSoilLookup.fetch_usda(mukey)` and receive `OutWestSepticSoilMapUnit` (also available as `SoilMapUnit`) or an explicit exception. Reports contain `OutWestSepticSoilComponent` records; failures use `OutWestSepticSoilDataError` (`SoilDataError` is retained as an alias). There is no hidden compatibility path that returns the old guesses.
 
 ## Sources and contribution
 
